@@ -1,3 +1,5 @@
+"""Harness tests: cite, refuse, sessions, and generator gating."""
+
 from pathlib import Path
 
 from agent.chunk import load_kb

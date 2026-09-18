@@ -1,9 +1,14 @@
-"""Agent loop: session + retrieve tool. Generation is gated on non-empty hits."""
+"""Agent loop: session plus retrieve tool.
+
+Generation is gated on non-empty hits. Empty retrieval refuses without calling
+the generator.
+"""
 
 from __future__ import annotations
 
 import uuid
 from dataclasses import dataclass, field
+from pathlib import Path
 
 from agent.chunk import Chunk, load_kb
 from agent.generate import generate
@@ -15,6 +20,16 @@ from agent.retrieve import lexical
 
 @dataclass
 class Turn:
+    """One ask/follow-up in a session.
+
+    Attributes:
+        question: User text for this turn.
+        answer: Model or refuse message.
+        refused: True when retrieval was empty or the model returned REFUSE.
+        citations: Source quotes; empty on refuse.
+        tool: Retriever that ran (``retrieve_qdrant`` or ``retrieve_lexical``).
+    """
+
     question: str
     answer: str
     refused: bool
@@ -24,12 +39,26 @@ class Turn:
 
 @dataclass
 class Session:
+    """Conversation that follow-ups attach to.
+
+    Attributes:
+        id: Opaque session identifier returned to the client.
+        turns: Ordered ask/answer pairs.
+    """
+
     id: str
     turns: list[Turn] = field(default_factory=list)
 
 
 class Harness:
+    """Cite-or-refuse controller around retrieval and generation."""
+
     def __init__(self, kb: list[Chunk]):
+        """Index ``kb`` and optionally upsert into Qdrant.
+
+        Args:
+            kb: Chunks loaded from the markdown knowledge base.
+        """
         self.kb = kb
         self.sessions: dict[str, Session] = {}
         self.qdrant = qdrant_client()
@@ -38,9 +67,20 @@ class Harness:
 
     @property
     def backend(self) -> str:
+        """Return ``qdrant`` or ``lexical`` depending on connectivity."""
         return "qdrant" if self.qdrant is not None else "lexical"
 
     def ask(self, question: str, session_id: str | None = None) -> dict:
+        """Retrieve, then generate or refuse.
+
+        Args:
+            question: User question.
+            session_id: Existing session to continue, or ``None`` to start one.
+
+        Returns:
+            A dict with ``session_id``, ``refused``, ``answer``, ``citations``,
+            and ``tool``.
+        """
         session = self._session(session_id)
         query = self._followup_query(session, question)
         hits, tool = self._retrieve(query)
@@ -71,12 +111,28 @@ class Harness:
         return self._payload(session, turn)
 
     def _retrieve(self, query: str) -> tuple[list[Chunk], str]:
+        """Run Qdrant search or lexical overlap.
+
+        Args:
+            query: Question, possibly concatenated with the prior turn.
+
+        Returns:
+            A tuple ``(hits, tool_name)``.
+        """
         if self.qdrant is not None:
             hits = qdrant_search(self.qdrant, query)
             return hits, "retrieve_qdrant"
         return lexical(query, self.kb), "retrieve_lexical"
 
     def _session(self, session_id: str | None) -> Session:
+        """Return an existing session or create one.
+
+        Args:
+            session_id: Client-supplied id, or ``None``.
+
+        Returns:
+            The session stored on this harness.
+        """
         if session_id and session_id in self.sessions:
             return self.sessions[session_id]
         session = Session(id=session_id or str(uuid.uuid4()))
@@ -84,12 +140,30 @@ class Harness:
         return session
 
     def _followup_query(self, session: Session, question: str) -> str:
+        """Blend the last question into the retrieve query for follow-ups.
+
+        Args:
+            session: Current conversation.
+            question: New user text.
+
+        Returns:
+            ``question`` alone on the first turn, otherwise prior + current.
+        """
         if not session.turns:
             return question
         prior = session.turns[-1].question
         return f"{prior} {question}"
 
     def _payload(self, session: Session, turn: Turn) -> dict:
+        """Build the HTTP-facing turn dict.
+
+        Args:
+            session: Conversation that owns ``turn``.
+            turn: Latest result.
+
+        Returns:
+            JSON-serializable response body.
+        """
         return {
             "session_id": session.id,
             "refused": turn.refused,
@@ -99,5 +173,13 @@ class Harness:
         }
 
 
-def boot(kb_dir) -> Harness:
+def boot(kb_dir: Path) -> Harness:
+    """Load markdown under ``kb_dir`` and construct a harness.
+
+    Args:
+        kb_dir: Directory of ``*.md`` source files.
+
+    Returns:
+        A ready :class:`Harness`.
+    """
     return Harness(load_kb(kb_dir))

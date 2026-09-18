@@ -1,10 +1,14 @@
-"""Qdrant cosine search. Optional — harness falls back to in-process retrieval."""
+"""Qdrant cosine search.
+
+The harness falls back to in-process retrieval when ``QDRANT_URL`` is unset or
+the broker is unreachable.
+"""
 
 from __future__ import annotations
 
 import os
 import uuid
-from typing import Optional
+from typing import Any, Optional
 
 from agent.chunk import Chunk
 from agent.embed import DIM, embed
@@ -12,7 +16,13 @@ from agent.embed import DIM, embed
 COLLECTION = "kb_chunks"
 
 
-def client():
+def client() -> Any | None:
+    """Connect to Qdrant and ensure the knowledge-base collection exists.
+
+    Returns:
+        A ``QdrantClient`` when ``QDRANT_URL`` is set and reachable, otherwise
+        ``None``.
+    """
     url = os.environ.get("QDRANT_URL")
     if not url:
         return None
@@ -35,7 +45,16 @@ def client():
     return qc
 
 
-def upsert(qc, chunks: list[Chunk]) -> int:
+def upsert(qc: Any, chunks: list[Chunk]) -> int:
+    """Write chunk embeddings into Qdrant.
+
+    Args:
+        qc: Connected Qdrant client.
+        chunks: Documents to index.
+
+    Returns:
+        Number of points upserted.
+    """
     from qdrant_client.http import models
 
     points = []
@@ -51,7 +70,18 @@ def upsert(qc, chunks: list[Chunk]) -> int:
     return len(points)
 
 
-def search(qc, question: str, k: int = 3, min_score: float = 0.22) -> list[Chunk]:
+def search(qc: Any, question: str, k: int = 3, min_score: float = 0.22) -> list[Chunk]:
+    """Search the collection for chunks similar to ``question``.
+
+    Args:
+        qc: Connected Qdrant client.
+        question: User query.
+        k: Maximum hits requested from Qdrant.
+        min_score: Minimum cosine score kept after search.
+
+    Returns:
+        Matching chunks, possibly empty.
+    """
     hits = qc.search(collection_name=COLLECTION, query_vector=embed(question), limit=k)
     out: list[Chunk] = []
     for h in hits:
@@ -62,5 +92,13 @@ def search(qc, question: str, k: int = 3, min_score: float = 0.22) -> list[Chunk
     return out
 
 
-def available(qc) -> Optional[str]:
+def available(qc: Any | None) -> Optional[str]:
+    """Return the backend name when a client is live.
+
+    Args:
+        qc: Client from :func:`client`, or ``None``.
+
+    Returns:
+        ``"qdrant"`` or ``None``.
+    """
     return "qdrant" if qc is not None else None

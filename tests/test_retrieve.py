@@ -1,7 +1,8 @@
+"""Lexical retrieval tests for the markdown knowledge base."""
+
 from pathlib import Path
 
 from agent.chunk import load_kb
-from agent.harness import Harness
 from agent.retrieve import lexical
 
 KB = load_kb(Path(__file__).resolve().parents[1] / "kb")

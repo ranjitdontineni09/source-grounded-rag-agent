@@ -1,3 +1,5 @@
+"""LoRA dataset tests: answers require context; REFUSE examples exist."""
+
 import json
 from pathlib import Path
 

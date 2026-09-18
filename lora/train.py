@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Fine-tune an open-weight Llama-family model with LoRA on cite-or-refuse pairs.
 
-Default runtime does not need this. CI runs --dry-run (dataset only).
-GPU training: pip install -r requirements-lora.txt
+Default runtime does not need this. CI runs ``--dry-run`` (dataset only).
+GPU training: ``pip install -r requirements-lora.txt``.
 """
 
 from __future__ import annotations
@@ -16,6 +16,11 @@ DATA = ROOT / "dataset.jsonl"
 
 
 def load_rows() -> list[dict]:
+    """Read the JSONL cite-or-refuse dataset.
+
+    Returns:
+        One dict per non-empty line.
+    """
     rows = []
     for line in DATA.read_text(encoding="utf-8").splitlines():
         if not line.strip():
@@ -25,6 +30,15 @@ def load_rows() -> list[dict]:
 
 
 def validate(rows: list[dict]) -> None:
+    """Check required fields and that answers are grounded or REFUSE.
+
+    Args:
+        rows: Dataset loaded by :func:`load_rows`.
+
+    Raises:
+        SystemExit: If the set is too small, a row is malformed, an answer has
+            no context, or there are fewer than two REFUSE examples.
+    """
     required = {"instruction", "context", "question", "output"}
     if len(rows) < 8:
         raise SystemExit("dataset too small")
@@ -37,9 +51,6 @@ def validate(rows: list[dict]) -> None:
             raise SystemExit(f"row {i} empty question/output")
         if row["output"].strip().upper() == "REFUSE":
             refuses += 1
-            if row["context"].strip() and "kafka" in row["question"].lower():
-                # refuse with relevant context is ok for off-topic questions
-                pass
         elif not row["context"].strip():
             raise SystemExit(f"row {i} answers without context")
     if refuses < 2:
@@ -47,6 +58,14 @@ def validate(rows: list[dict]) -> None:
 
 
 def format_prompt(row: dict) -> str:
+    """Render one training example as a causal-LM string.
+
+    Args:
+        row: Keys ``instruction``, ``context``, ``question``, ``output``.
+
+    Returns:
+        Prompt ending in ``Answer: {output}``.
+    """
     return (
         f"{row['instruction']}\n\n"
         f"Sources:\n{row['context'] or '(none)'}\n\n"
@@ -56,6 +75,12 @@ def format_prompt(row: dict) -> str:
 
 
 def train(args: argparse.Namespace, rows: list[dict]) -> None:
+    """Run PEFT LoRA training and write the adapter.
+
+    Args:
+        args: Parsed CLI including ``base_model``, ``output_dir``, ``epochs``.
+        rows: Validated dataset rows.
+    """
     import torch
     from datasets import Dataset
     from peft import LoraConfig, TaskType, get_peft_model
@@ -68,6 +93,14 @@ def train(args: argparse.Namespace, rows: list[dict]) -> None:
     dataset = Dataset.from_dict({"text": texts})
 
     def tokenize(batch):
+        """Pad and copy input ids to labels.
+
+        Args:
+            batch: Hugging Face batch with a ``text`` column.
+
+        Returns:
+            Tokenized batch including ``labels``.
+        """
         out = tokenizer(batch["text"], truncation=True, max_length=512, padding="max_length")
         out["labels"] = out["input_ids"].copy()
         return out
@@ -109,6 +142,7 @@ def train(args: argparse.Namespace, rows: list[dict]) -> None:
 
 
 def main() -> None:
+    """Validate the dataset, then train unless ``--dry-run``."""
     parser = argparse.ArgumentParser()
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--base-model", default="TinyLlama/TinyLlama-1.1B-Chat-v1.0")

@@ -1,3 +1,5 @@
+"""FastAPI surface for the source-grounded RAG agent."""
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -23,12 +25,24 @@ harness = boot(ROOT / "kb")
 
 
 class Ask(BaseModel):
+    """POST /api/ask body.
+
+    Attributes:
+        question: User question (3–800 characters).
+        session_id: Optional id from a previous response for follow-up.
+    """
+
     question: str = Field(min_length=3, max_length=800)
     session_id: str | None = None
 
 
 @app.get("/health")
 def health() -> dict:
+    """Report index size and which retriever is live.
+
+    Returns:
+        Dict with ``ok``, ``docs``, ``chunks``, and ``retriever``.
+    """
     return {
         "ok": True,
         "docs": len({c.doc for c in harness.kb}),
@@ -39,11 +53,30 @@ def health() -> dict:
 
 @app.post("/api/ask")
 def ask(body: Ask) -> dict:
+    """Run retrieve-then-generate (or refuse) for one turn.
+
+    Args:
+        body: Question and optional session id.
+
+    Returns:
+        Harness payload including citations or ``refused: true``.
+    """
     return harness.ask(body.question, body.session_id)
 
 
 @app.get("/api/session/{session_id}")
 def session(session_id: str) -> dict:
+    """Return the full turn list for a session.
+
+    Args:
+        session_id: Id from a prior ``/api/ask`` response.
+
+    Returns:
+        Dict with ``session_id`` and ``turns``.
+
+    Raises:
+        HTTPException: 404 if the session is unknown.
+    """
     found = harness.sessions.get(session_id)
     if not found:
         raise HTTPException(status_code=404, detail="unknown session")
@@ -66,11 +99,21 @@ if UI.is_dir():
 
     @app.get("/")
     def spa() -> FileResponse:
+        """Serve the built React UI.
+
+        Returns:
+            ``frontend/dist/index.html``.
+        """
         return FileResponse(UI / "index.html")
 else:
 
     @app.get("/")
     def fallback_ui():
+        """Explain how to build the UI when ``frontend/dist`` is missing.
+
+        Returns:
+            A short HTML note with npm commands.
+        """
         from fastapi.responses import HTMLResponse
 
         return HTMLResponse(
